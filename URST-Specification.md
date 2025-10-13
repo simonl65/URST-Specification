@@ -1,6 +1,6 @@
 # URST Protocol Specification
 
-**Version:** 0.3.0  
+**Version:** 0.3.1  
 **Status:** Draft  
 **Date:** 2025-10-13
 
@@ -688,8 +688,20 @@ When receiving fragments, the receiver MUST:
 Implementations SHOULD implement a timeout mechanism for incomplete fragmented messages:
 
 - If fragments for a Message ID are not completed within a reasonable time, discard them
-- Recommended timeout: 10 _ DEFAULT_TIMEOUT_MS _ MAX_RETRIES <span style="color:red; font-weight:bold"><i>TODO: Check this</i></span>
+- Recommended timeout calculation:
+
+  ```
+  fragment_timeout = max_expected_fragments * (MAX_RETRIES + 1) * DEFAULT_TIMEOUT_MS
+
+  Example for 10 fragments:
+  fragment_timeout = 10 * (3 + 1) * 1000ms = 40,000ms = 40 seconds
+  ```
+
 - This prevents memory exhaustion from incomplete messages
+- The multiplier `(MAX_RETRIES + 1)` accounts for initial attempt plus all retries
+- Applications MAY use shorter timeouts if maximum message size is known
+
+**Rationale:** Each fragment requires up to `(MAX_RETRIES + 1) * DEFAULT_TIMEOUT_MS` in the worst case (initial transmission plus all retries). The total timeout should accommodate all expected fragments.
 
 ### 6.4 Fragment Detection
 
@@ -1071,7 +1083,18 @@ In future versions, a RESYNC frame may be added.
 
 ### Q8: What happens if fragment reassembly fails?
 
-**A:** Individual fragments use reliable delivery (ACK/NAK), so fragments won't be lost. However, implementations SHOULD implement a timeout to discard incomplete fragment sets after ~30 seconds to prevent memory exhaustion.
+**A:** Individual fragments use reliable delivery (ACK/NAK), so fragments won't be lost during transmission. However, if the sender crashes or disconnects mid-transmission, the receiver may have incomplete fragments.
+
+Implementations SHOULD implement a timeout to discard incomplete fragment sets. The timeout should be:
+
+```
+timeout = max_expected_fragments * (MAX_RETRIES + 1) * DEFAULT_TIMEOUT_MS
+
+Example: For up to 10 fragments with default settings:
+timeout = 10 * 4 * 1000ms = 40 seconds
+```
+
+This calculation accounts for each fragment potentially requiring all retry attempts before succeeding.
 
 ### Q9: Is URST suitable for real-time applications?
 
