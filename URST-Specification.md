@@ -1,8 +1,13 @@
 # URST Protocol Specification
 
-**Version:** 0.3.1  
+![Status](https://img.shields.io/badge/status-draft-orange)
+
+**Version:** 0.3.2  
 **Status:** Draft  
-**Date:** 2025-10-13
+**Date:** 2025-10-13  
+**Authors:** Simon R. Lincoln  
+**Copyright:** © 2025 Simon R. Lincoln  
+**License:** Specification is freely implementable; reference code under Sustainable Use License
 
 ---
 
@@ -31,13 +36,13 @@ This document is a **draft** specification and is subject to change. It is provi
 9. [IANA Considerations](#9-iana-considerations)
 10. [References](#10-references)
 11. [Glossary](#11-glossary)
-12. [Document Information](#12-document-information)
 
 Appendices:
 
 - [Appendix A. Specification Checklist](#appendix-a-specification-checklist)
 - [Appendix B. Future Protocol Extensions](#appendix-b-future-protocol-extensions)
-- [Appendix C. FAQ (Frequently Asked Questions)](#appendix-c-faq-frequently-asked-questions)
+- [Appendix C. Questions & Answers](#appendix-c-questions-and-answers)
+- [CHANGELOG](#changelog)
 
 ---
 
@@ -75,15 +80,15 @@ URST implements a four-layer architecture providing reliable delivery over unrel
 URST implements four distinct layers:
 
 ```
-┌─────────────────────────────────────┐
-│      Handler Layer (Application)    │  User API: send(), receive()
-├─────────────────────────────────────┤
-│       Protocol Layer (Reliable)     │  ACK/NAK, Retransmission
-├─────────────────────────────────────┤
-│      Transport Layer (Framing)      │  Frame Type, Sequence Num's
-├─────────────────────────────────────┤
-│     Codec Layer (Encoding/IO)       │  COBS, CRC-16, UART
-└─────────────────────────────────────┘
+┌───────────────────────────────────┐
+│    Handler Layer (Application)    │  User API: send(), receive()
+├───────────────────────────────────┤
+│     Protocol Layer (Reliable)     │  ACK/NAK, Retransmission
+├───────────────────────────────────┤
+│     Transport Layer (Framing)     │  Frame Type, Sequence Numbers
+├───────────────────────────────────┤
+│    Codec Layer (Encoding/IO)      │  COBS, CRC-16, UART
+└───────────────────────────────────┘
 ```
 
 ### 2.2 Layer Responsibilities
@@ -164,21 +169,22 @@ Frame = [Frame Type][Sequence Number][Payload (0-200 bytes)][CRC-16]
 
 The Frame Type field identifies the purpose of the frame.
 
-| Type     | Value     | Description              | Payload Size | Required |
-| -------- | --------- | ------------------------ | ------------ | -------- |
-| DATA     | 0x01      | Application data frame   | 0-200 bytes  | MUST     |
-| ACK      | 0x02      | Acknowledgment (success) | 0 bytes      | MUST     |
-| NAK      | 0x03      | Negative acknowledgment  | 0 bytes      | MUST     |
-| Reserved | 0x00      | Invalid (zero byte)      | -            | -        |
-| Reserved | 0x04-0x0F | Reserved                 | -            | -        |
-| Reserved | 0x10-0xFF | Reserved for future use  | -            | -        |
+| Type     | Value     | Description                       | Payload Size | Required |
+| -------- | --------- | --------------------------------- | ------------ | -------- |
+| DATA     | 0x01      | Application data frame            | 0-200 bytes  | MUST     |
+| ACK      | 0x02      | Acknowledgment (success)          | 0 bytes      | MUST     |
+| NAK      | 0x03      | Negative acknowledgment           | 0 bytes      | MUST     |
+| FRAG     | 0x04      | Fragmented message chunk (see §6) | 0-200 bytes  | MUST     |
+| Reserved | 0x00      | Invalid (zero byte)               | -            | -        |
+| Reserved | 0x05-0x0F | Reserved                          | -            | -        |
+| Reserved | 0x10-0xFF | Reserved for future use           | -            | -        |
 
 **Requirements:**
 
-- Implementations MUST support DATA, ACK, and NAK frame types
+- Implementations MUST support DATA, ACK, NAK, and FRAG frame types
 - Implementations MUST silently discard frames with unknown frame types
 - Implementations MUST NOT use frame type 0x00
-- Frame types 0x04-0xFF are reserved for future protocol versions
+- Frame types 0x05-0xFF are reserved for future protocol versions
 
 #### 3.2.2 Sequence Number (1 byte)
 
@@ -394,21 +400,21 @@ def cobs_decode(data):
     │  WAITING_ACK ←────── (transmitted)
     │     │
     │     ├──►[ACK received] ──→ SUCCESS ──┐
-    │     │                                 │
+    │     │                                │
     │     ├──►[NAK received] ──→ retry++   │
-    │     │         │                       │
+    │     │         │                      │
     │     │         └─────►[retry < MAX] ──┤
-    │     │                       │         │
-    │     │                  SENDING        │
-    │     │                                 │
+    │     │                       │        │
+    │     │                  SENDING       │
+    │     │                                │
     │     ├──►[Timeout] ──────→ retry++    │
-    │     │         │                       │
+    │     │         │                      │
     │     │         └─────►[retry < MAX] ──┤
-    │     │                                 │
-    │     │                                 │
+    │     │                                │
+    │     │                                │
     │     └──►[retry >= MAX] ──→ FAILED    │
-    │                              │        │
-    └──────────────────────────────┴────────┘
+    │                              │       │
+    └──────────────────────────────┴───────┘
                                    │
                                    ↓
                               Return to IDLE
@@ -425,37 +431,45 @@ def cobs_decode(data):
 ### 4.2 Receiver State Machine
 
 ```
-    LISTENING
-        │
-        │ Frame received
-        ↓
-    FRAME_RECEIVED
-        │
-        ├──►[Invalid COBS] ────────────┐
-        │                              │
-        ├──►[Invalid CRC] ─────────────┤
-        │                              │
-        │                              ├──► LISTENING
-        ├──►[Unknown Frame Type] ──────┤      (discard)
-        │                              │
-        │                              │
-        ├──►[ACK/NAK Frame] ───────────┴──► LISTENING
-        │         │                         (process in protocol)
-        │         │
-        │    (pass to protocol)
-        │
-        ├──►[DATA Frame]
-        │         │
-        │         ├──►[seq == expected] ──→ SEND_ACK ──→ DELIVER ──→ LISTENING
-        │         │                                                   (advance seq)
-        │         │
-        │         ├──►[seq == last_received] ──→ SEND_ACK ──→ LISTENING
-        │         │                                          (duplicate, discard)
-        │         │
-        │         └──►[seq != expected] ──→ SEND_NAK ──→ LISTENING
-        │                                                (out of order, discard)
-        │
-        └──► (continue)
+  LISTENING
+      │
+      │ Frame received
+      ↓
+  FRAME_RECEIVED
+      │
+      ├──►[Invalid COBS] ────────────┐
+      │                              │
+      ├──►[Invalid CRC] ─────────────┤
+      │                              │
+      │                              ├──► LISTENING
+      ├──►[Unknown Frame Type] ──────┤    (discard)
+      │                              │
+      │                              │
+      ├──►[ACK/NAK Frame] ───────────┴──► LISTENING
+      │         │                         (process in protocol)
+      │         │
+      │    (pass to protocol)
+      │
+      ├──►[DATA Frame]
+      │         │
+      │         ├──►[seq == expected]
+      |         |          |
+      |         |          └──► SEND_ACK
+      |         |                   |
+      |         |                   └──► DELIVER ──→ LISTENING
+      │         │                                    (advance seq)
+      │         │
+      │         ├──►[seq == last_received]
+      │         |          |
+      |         |          └──► SEND_ACK ──→ LISTENING
+      │         │                            (duplicate, discard)
+      │         │
+      │         └──►[seq != expected]
+      │                   |
+      │                   └──►SEND_NAK ──→ LISTENING
+      │                                    (out of order, discard)
+      │
+      └──► (continue)
 ```
 
 **State Descriptions:**
@@ -624,7 +638,7 @@ When application data exceeds the available payload space (accounting for protoc
 
 ### 6.2 Fragment Frame Format
 
-Fragmented messages use DATA frames with a specific payload structure:
+Fragmented messages use FRAG frames with a specific payload structure:
 
 ```
  0                   1                   2                   3
@@ -656,7 +670,7 @@ When fragmenting a message, the sender MUST:
 4. For each fragment (i = 0 to total_frags - 1):
    - Extract fragment data: `data[i * 194 : (i+1) * 194]`
    - Construct fragment header: `[msg_id][i][total_frags][len(fragment_data)]`
-   - Send fragment + header using reliable delivery (ACK/NAK)
+   - Send fragment + header in a FRAG frame using reliable delivery (ACK/NAK)
 5. Only proceed to next fragment after successful ACK
 6. Report failure to application if any fragment fails after MAX_RETRIES
 
@@ -666,10 +680,7 @@ When fragmenting a message, the sender MUST:
 
 When receiving fragments, the receiver MUST:
 
-1. Detect fragment by checking:
-   - Payload length >= 4 bytes
-   - Total Frags > 1
-   - Payload length >= 4 + Data Length
+1. Process only FRAG frames for fragmentation
 2. Extract fragment header fields
 3. Store fragment in reassembly buffer keyed by Message ID
 4. Track received fragment count per Message ID
@@ -707,13 +718,10 @@ Implementations SHOULD implement a timeout mechanism for incomplete fragmented m
 
 ### 6.4 Fragment Detection
 
-Single-frame messages (< 194 bytes payload) MUST NOT use fragment headers. Receivers distinguish fragments from regular data by:
+Single-frame messages (< 194 bytes payload) MUST NOT use fragment headers. Receivers MUST distinguish fragments from regular data by frame type only:
 
-1. Checking payload length >= 4
-2. Verifying Total Frags field > 1
-3. Verifying payload contains expected data length
-
-Non-fragmented data that happens to match this pattern is implementation-defined. Applications SHOULD avoid data patterns that could be misinterpreted as fragment headers.
+1. FRAG: contains the fragment sub-header and chunk data (process per §6.3)
+2. DATA: opaque application payload (MUST NOT be heuristically parsed as fragments)
 
 ---
 
@@ -899,18 +907,6 @@ https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 
 ---
 
-## 12. Document Information
-
-**Document Title:** Universal Reliable Serial Transport (URST) Protocol Specification  
-**Version:** 0.2.0  
-**Status:** Draft  
-**Date:** 2025-10-13  
-**Authors:** Simon R. Lincoln  
-**Copyright:** © 2025 Simon R. Lincoln  
-**License:** Specification is freely implementable; reference code under Sustainable Use License
-
----
-
 ## Appendix A. Specification Checklist
 
 Use this checklist when implementing URST:
@@ -970,13 +966,11 @@ Use this checklist when implementing URST:
 
 ---
 
----
-
 ## Appendix B. Future Protocol Extensions
 
 This section describes potential extensions for future versions of URST. These are NOT part of the current specification.
 
-### B.1 Potential Version 0.3.0 Features
+### B.1 Potential Future Version Features
 
 #### B.1.1 Sliding Window Flow Control
 
@@ -1012,18 +1006,19 @@ Add optional timestamp field:
 
 ### B.2 Reserved Frame Types for Extensions
 
-Frame types 0x04-0xFF are reserved for future use. Potential allocations:
+Frame types 0x05-0x40, inclusive, are reserved for future use. Potential allocations:
 
 ```
-0x04: CONNECT (connection establishment)
-0x05: CONNECT_ACK (connection acknowledgment)
-0x06: DISCONNECT (graceful disconnect)
-0x07: KEEPALIVE (connection keepalive)
-0x08: COMPRESSED_DATA (compressed payload)
-0x09: ENCRYPTED_DATA (encrypted payload)
-0x0A: TIMESTAMPED_DATA (data with timestamp)
-0x10-0x1F: Reserved for firmware update protocol
-0x20-0xFF: Reserved for future use
+0x05-0x1F: Reserved for possible firmware update protocol
+0x20: CONNECT (connection establishment)
+0x21: CONNECT_ACK (connection acknowledgment)
+0x22: DISCONNECT (graceful disconnect)
+0x23: KEEPALIVE (connection keepalive)
+0x24: COMPRESSED_DATA (compressed payload)
+0x25: ENCRYPTED_DATA (encrypted payload)
+0x26: TIMESTAMPED_DATA (data with timestamp)
+0x27-0x40: Reserved for future use
+0x41-0xFF: Available for application-specific use
 ```
 
 ### B.3 Backward Compatibility
@@ -1036,11 +1031,11 @@ Future versions MUST maintain backward compatibility:
 
 ---
 
-## Appendix C. FAQ (Frequently Asked Questions)
+## Appendix C. Questions and Answers
 
-### Q1: Why use COBS instead of byte stuffing?
+### Q1: Why use COBS?
 
-**A:** COBS has predictable overhead (max 0.4%) compared to byte stuffing which can have variable overhead. COBS also guarantees no 0x00 bytes in output, making frame boundaries unambiguous.
+**A:** COBS has predictable overhead (max 0.4%) and guarantees no 0x00 bytes in output, making frame boundaries unambiguous.
 
 ### Q2: Why CRC-16 instead of CRC-32?
 
@@ -1048,7 +1043,7 @@ Future versions MUST maintain backward compatibility:
 
 ### Q3: Why stop-and-wait instead of sliding window?
 
-**A:** Simplicity and minimal state requirements. Stop-and-wait uses ~1KB RAM while sliding window requires significantly more. For typical microcontroller applications, the throughput is adequate. Sliding window may be added in future versions.
+**A:** Simplicity and minimal state requirements. For typical microcontroller applications, the throughput is adequate. Sliding window may be added in future versions.
 
 ### Q4: Can I use URST over other transports (USB, TCP, etc.)?
 
@@ -1090,7 +1085,7 @@ This calculation accounts for each fragment potentially requiring all retry atte
 
 ### Q9: Is URST suitable for real-time applications?
 
-**A:** URST has bounded latency in the worst case (3.1 seconds with retries). For soft real-time (100ms-1s deadlines), it's suitable. For hard real-time (<10ms), the retry mechanism may cause deadline misses.
+**A:** URST has bounded latency in the worst case (3.1 seconds with retries). For soft real-time (100ms-1s deadlines) it's suitable. For hard real-time (<10ms), the retry mechanism may cause deadline misses.
 
 ### Q10: How do I detect if the other end has disconnected?
 
@@ -1124,4 +1119,12 @@ Tested up to several megabytes for firmware updates.
 4. Verify complete file CRC
 5. Trigger bootloader
 
-Reserved frame types 0x10-0x1F may be standardized for this in future versions.
+Reserved frame types 0x05-0x0F may be standardized for this in future versions.
+
+---
+
+## Appendix D. Change Log
+
+| Version | Date       | Description                                                                                                           |
+| :------ | :--------- | :-------------------------------------------------------------------------------------------------------------------- |
+| 0.3.2   | 2025-10-13 | Added FRAG frame type to mitigate edge case where a DATA frame's content _could_ have been interpreted as a fragment. |
