@@ -30,12 +30,14 @@ This document is a **draft** specification and is subject to change. It is provi
 8. [Security Considerations](#8-security-considerations)
 9. [IANA Considerations](#9-iana-considerations)
 10. [References](#10-references)
+11. [Glossary](#11-glossary)
+12. [Document Information](#12-document-information)
 
 Appendices:
 
-- [Appendix A: Example Usage](#appendix-a-example-usage)
-- [Appendix B: Test Vectors](#appendix-b-test-vectors)
-- [Appendix C: Implementation Flowcharts](#appendix-c-implementation-flowcharts)
+- [Appendix A. Specification Checklist](#appendix-a-specification-checklist)
+- [Appendix B. Future Protocol Extensions](#appendix-b-future-protocol-extensions)
+- [Appendix C. FAQ (Frequently Asked Questions)](#appendix-c-faq-frequently-asked-questions)
 
 ---
 
@@ -871,19 +873,9 @@ https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
 "Cyclic Redundancy Check", Wikipedia.  
 https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 
-### 10.2 Informative References
-
-**[CRC]**  
-"Cyclic Redundancy Check", Wikipedia.  
-https://en.wikipedia.org/wiki/Cyclic_redundancy_check
-
-**[MicroPython]**  
-MicroPython - Python for microcontrollers.  
-https://micropython.org/
-
 ---
 
-## 15. Glossary
+## 11. Glossary
 
 | Term            | Definition                                                    |
 | --------------- | ------------------------------------------------------------- |
@@ -907,7 +899,7 @@ https://micropython.org/
 
 ---
 
-## 16. Document Information
+## 12. Document Information
 
 **Document Title:** Universal Reliable Serial Transport (URST) Protocol Specification  
 **Version:** 0.2.0  
@@ -984,9 +976,9 @@ Use this checklist when implementing URST:
 
 This section describes potential extensions for future versions of URST. These are NOT part of the current specification.
 
-### 13.1 Potential Version 0.3.0 Features
+### B.1 Potential Version 0.3.0 Features
 
-#### 13.1.1 Sliding Window Flow Control
+#### B.1.1 Sliding Window Flow Control
 
 Replace stop-and-wait with selective repeat ARQ:
 
@@ -994,7 +986,7 @@ Replace stop-and-wait with selective repeat ARQ:
 - Out-of-order delivery support
 - Reduced latency for bulk transfers
 
-#### 13.1.2 Connection Establishment
+#### B.1.2 Connection Establishment
 
 Add handshake frames:
 
@@ -1002,7 +994,7 @@ Add handshake frames:
 - Protocol version negotiation
 - Parameter exchange (window size, timeout, etc.)
 
-#### 13.1.3 Compression
+#### B.1.3 Compression
 
 Optional payload compression:
 
@@ -1010,7 +1002,7 @@ Optional payload compression:
 - Negotiated compression algorithm
 - Beneficial for repetitive data patterns
 
-#### 13.1.4 Timestamps
+#### B.1.4 Timestamps
 
 Add optional timestamp field:
 
@@ -1018,7 +1010,7 @@ Add optional timestamp field:
 - Replay attack detection
 - Synchronization support
 
-### 13.2 Reserved Frame Types for Extensions
+### B.2 Reserved Frame Types for Extensions
 
 Frame types 0x04-0xFF are reserved for future use. Potential allocations:
 
@@ -1034,7 +1026,7 @@ Frame types 0x04-0xFF are reserved for future use. Potential allocations:
 0x20-0xFF: Reserved for future use
 ```
 
-### 13.3 Backward Compatibility
+### B.3 Backward Compatibility
 
 Future versions MUST maintain backward compatibility:
 
