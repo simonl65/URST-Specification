@@ -1,8 +1,8 @@
 # URST Protocol Specification
 
-**Version:** 0.2.0  
+**Version:** 0.3.0  
 **Status:** Draft  
-**Date:** 2025-10-12
+**Date:** 2025-10-13
 
 ---
 
@@ -752,6 +752,10 @@ The following behaviors are explicitly NON-CONFORMANT:
 - Accepting frames with invalid CRC
 - Modifying frame type values 0x01-0x03
 - Using frame type 0x00
+- Sending ACK/NAK frames with non-empty payloads
+- Failing to implement COBS encoding
+- Implementing different CRC algorithms
+- Using big-endian byte order for CRC serialization
 
 ---
 
@@ -807,7 +811,15 @@ CRC-16 provides error detection but NOT cryptographic integrity:
 - Does NOT protect against intentional modification
 - An attacker can modify data and recalculate valid CRC
 
-### 8.6 Recommendations for Secure Applications
+### 8.6 Sequence Number Prediction
+
+The 8-bit sequence number is predictable:
+
+- Sequences are sequential and wrap at 255
+- An attacker could inject frames with predicted sequence numbers
+- This is mitigated by physical security of the serial connection
+
+### 8.7 Recommendations for Secure Applications
 
 Applications requiring security SHOULD:
 
@@ -816,6 +828,8 @@ Applications requiring security SHOULD:
 3. Use physically secured serial connections
 4. Implement sequence number validation beyond URST's basic duplicate detection
 5. Implement application-level timeouts and rate limiting
+6. Consider adding timestamps to detect replay attacks
+7. Implement message authentication codes (MAC) for integrity
 
 ---
 
@@ -845,32 +859,254 @@ https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
 "Cyclic Redundancy Check", Wikipedia.  
 https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 
+### 10.2 Informative References
+
+**[CRC]**  
+"Cyclic Redundancy Check", Wikipedia.  
+https://en.wikipedia.org/wiki/Cyclic_redundancy_check
+
 **[MicroPython]**  
 MicroPython - Python for microcontrollers.  
 https://micropython.org/
 
 ---
 
-## Appendix A. Example Usage
+## 15. Glossary
 
-### A.1 Basic Send/Receive
+| Term            | Definition                                                    |
+| --------------- | ------------------------------------------------------------- |
+| ACK             | Acknowledgment frame indicating successful reception          |
+| COBS            | Consistent Overhead Byte Stuffing encoding algorithm          |
+| CRC             | Cyclic Redundancy Check for error detection                   |
+| Delimiter       | 0x00 byte marking frame boundaries                            |
+| Fragment        | Portion of a larger message split for transmission            |
+| Frame           | Complete unit of transmission (header + payload + CRC)        |
+| Handler         | High-level API layer providing send/receive interface         |
+| NAK             | Negative acknowledgment indicating rejection                  |
+| Payload         | Application data carried in frame (0-200 bytes)               |
+| Sequence Number | 8-bit counter for duplicate detection (0-255)                 |
+| Stop-and-Wait   | Flow control requiring ACK before next transmission           |
+| UART            | Universal Asynchronous Receiver-Transmitter (serial hardware) |
+| URST            | Universal Reliable Serial Transport                           |
 
-```python
-from machine import UART
-from urst import URSTHandler
+---
 
-# Initialize UART
-uart = UART(1, baudrate=115200, tx=4, rx=5)
+**End of Specification**
 
-# Create URST handler
-urst = URSTHandler(uart)
+---
 
-# Send data (blocking until ACK or failure)
-success = urst.send(b"My bits are stuffed!")
+## 16. Document Information
 
-while True:
-    data = comms.receive()
-    if data:
-        print(f"Received: {data}")
-    time.sleep(0.1)  # Prevent tight loop
+**Document Title:** Universal Reliable Serial Transport (URST) Protocol Specification  
+**Version:** 0.2.0  
+**Status:** Draft  
+**Date:** 2025-10-13  
+**Authors:** Simon R. Lincoln  
+**Copyright:** © 2025 Simon R. Lincoln  
+**License:** Specification is freely implementable; reference code under Sustainable Use License
+
+---
+
+## Appendix A. Specification Checklist
+
+Use this checklist when implementing URST:
+
+### A.1 Codec Layer
+
+- [ ] CRC-16-CCITT implemented with correct polynomial (0x1021)
+- [ ] CRC initial value is 0xFFFF
+- [ ] CRC serialized as little-endian
+- [ ] COBS encoding handles empty data (returns 0x01)
+- [ ] COBS encoding handles all-zero data correctly
+- [ ] COBS decoding rejects embedded 0x00 bytes
+- [ ] Frame delimiters are 0x00
+- [ ] Receive buffer implements overflow protection
+- [ ] Test vectors from Appendix B pass
+
+### A.2 Transport Layer
+
+- [ ] Frame header is exactly 2 bytes [type][seq]
+- [ ] Frame type values 0x01-0x03 implemented
+- [ ] Unknown frame types silently discarded
+- [ ] Frame type 0x00 never used
+- [ ] Sequence numbers wrap correctly (255 → 0)
+- [ ] Sequence number management implemented
+
+### A.3 Protocol Layer
+
+- [ ] ACK frames have empty payload
+- [ ] NAK frames have empty payload
+- [ ] ACK/NAK echo sequence number in header
+- [ ] CRC failures result in silent discard (no NAK)
+- [ ] COBS failures result in silent discard
+- [ ] Expected sequence number tracked
+- [ ] Last received sequence number tracked
+- [ ] Duplicate frames send ACK but discard payload
+- [ ] Out-of-sequence frames send NAK
+- [ ] Timeout mechanism implemented (1000ms default)
+- [ ] Retry counter implemented (MAX_RETRIES=3)
+- [ ] Sender waits for ACK before next frame
+
+### A.4 Handler Layer
+
+- [ ] Fragmentation threshold calculated correctly (194 bytes)
+- [ ] Fragment header format: [msg_id][frag_num][total][len]
+- [ ] Each fragment sent with reliable delivery
+- [ ] Fragment reassembly buffer implemented
+- [ ] Complete message detection works
+- [ ] Fragment timeout implemented (optional but recommended)
+- [ ] Non-fragmented messages detected correctly
+
+### A.5 Interoperability
+
+- [ ] MAX_PAYLOAD_SIZE = 200 bytes
+- [ ] Works with reference implementation
+- [ ] Cross-platform tested (if applicable)
+- [ ] Test vectors produce identical results
+
+---
+
+---
+
+## Appendix B. Future Protocol Extensions
+
+This section describes potential extensions for future versions of URST. These are NOT part of the current specification.
+
+### 13.1 Potential Version 0.3.0 Features
+
+#### 13.1.1 Sliding Window Flow Control
+
+Replace stop-and-wait with selective repeat ARQ:
+
+- Window size negotiation
+- Out-of-order delivery support
+- Reduced latency for bulk transfers
+
+#### 13.1.2 Connection Establishment
+
+Add handshake frames:
+
+- CONNECT / CONNECT_ACK
+- Protocol version negotiation
+- Parameter exchange (window size, timeout, etc.)
+
+#### 13.1.3 Compression
+
+Optional payload compression:
+
+- Frame type indicating compressed data
+- Negotiated compression algorithm
+- Beneficial for repetitive data patterns
+
+#### 13.1.4 Timestamps
+
+Add optional timestamp field:
+
+- Latency measurement
+- Replay attack detection
+- Synchronization support
+
+### 13.2 Reserved Frame Types for Extensions
+
+Frame types 0x04-0xFF are reserved for future use. Potential allocations:
+
 ```
+0x04: CONNECT (connection establishment)
+0x05: CONNECT_ACK (connection acknowledgment)
+0x06: DISCONNECT (graceful disconnect)
+0x07: KEEPALIVE (connection keepalive)
+0x08: COMPRESSED_DATA (compressed payload)
+0x09: ENCRYPTED_DATA (encrypted payload)
+0x0A: TIMESTAMPED_DATA (data with timestamp)
+0x10-0x1F: Reserved for firmware update protocol
+0x20-0xFF: Reserved for future use
+```
+
+### 13.3 Backward Compatibility
+
+Future versions MUST maintain backward compatibility:
+
+- Version 0.2.0 implementations MUST interoperate with 0.3.0
+- Optional features MUST be negotiated during connection
+- Implementations MUST gracefully handle unknown frame types
+
+---
+
+## Appendix C. FAQ (Frequently Asked Questions)
+
+### Q1: Why use COBS instead of byte stuffing?
+
+**A:** COBS has predictable overhead (max 0.4%) compared to byte stuffing which can have variable overhead. COBS also guarantees no 0x00 bytes in output, making frame boundaries unambiguous.
+
+### Q2: Why CRC-16 instead of CRC-32?
+
+**A:** CRC-16 provides excellent error detection (detects all single and double bit errors) while using less bandwidth. For typical serial communication error rates, CRC-16 is sufficient. CRC-32 could be added in future versions for critical applications.
+
+### Q3: Why stop-and-wait instead of sliding window?
+
+**A:** Simplicity and minimal state requirements. Stop-and-wait uses ~1KB RAM while sliding window requires significantly more. For typical microcontroller applications, the throughput is adequate. Sliding window may be added in future versions.
+
+### Q4: Can I use URST over other transports (USB, TCP, etc.)?
+
+**A:** Yes, but it's designed for serial UART. Over TCP, the reliability is redundant. Over USB-CDC, it works but you may want to adjust timeouts.
+
+### Q5: What baud rates are supported?
+
+**A:** URST works at any baud rate. Timeout values should be adjusted based on baud rate and payload size. For 115200 baud, 1000ms is appropriate. For 9600 baud, consider 2000ms.
+
+### Q6: How do I handle a completely desynchronized connection?
+
+**A:** If sequence numbers are out of sync:
+
+1. Clear both transmit and receive buffers
+2. Wait for timeout period (no transmissions)
+3. Reset sequence numbers to 0
+4. Resume communication
+
+In future versions, a RESYNC frame may be added.
+
+### Q7: Can I send binary data including 0x00 bytes?
+
+**A:** Yes! COBS encoding allows any binary data including null bytes. The payload can contain any byte values 0x00-0xFF.
+
+### Q8: What happens if fragment reassembly fails?
+
+**A:** Individual fragments use reliable delivery (ACK/NAK), so fragments won't be lost. However, implementations SHOULD implement a timeout to discard incomplete fragment sets after ~30 seconds to prevent memory exhaustion.
+
+### Q9: Is URST suitable for real-time applications?
+
+**A:** URST has bounded latency in the worst case (3.1 seconds with retries). For soft real-time (100ms-1s deadlines), it's suitable. For hard real-time (<10ms), the retry mechanism may cause deadline misses.
+
+### Q10: How do I detect if the other end has disconnected?
+
+**A:** URST doesn't have built-in keepalive. Applications should:
+
+- Implement periodic heartbeat messages
+- Consider lack of response to heartbeat as disconnection
+- Future versions may add KEEPALIVE frame type
+
+### Q11: Can multiple devices share a serial bus?
+
+**A:** No, URST is strictly point-to-point. It has no addressing mechanism. For multi-drop serial buses, consider Modbus or implement an addressing layer on top of URST.
+
+### Q12: What's the maximum message size?
+
+**A:** With fragmentation, theoretically unlimited. Practically limited by:
+
+- Available RAM for fragment buffers
+- Timeout for fragment reassembly
+- Application requirements
+
+Tested up to several megabytes for firmware updates.
+
+### Q13: How do I implement firmware updates over URST?
+
+**A:** Application-specific, but typical approach:
+
+1. Send metadata (file size, CRC, version)
+2. Fragment binary data (use URST fragmentation)
+3. Each fragment is reliably delivered
+4. Verify complete file CRC
+5. Trigger bootloader
+
+Reserved frame types 0x10-0x1F may be standardized for this in future versions.
