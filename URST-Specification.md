@@ -13,7 +13,7 @@
 
 ## Abstract
 
-This document specifies the **Universal Reliable Serial Transport** (URST) protocol, a lightweight - _acknowledgment before next transmission_ - communication protocol designed for reliable data transmission over serial connections in resource-constrained embedded systems. URST provides automatic retransmission, error detection via CRC-16, frame delimiting through COBS encoding, and support for message fragmentation.
+This document specifies the **Universal Reliable Serial Transport** (URST) protocol, a lightweight - _acknowledgment before next transmission_ - communication protocol designed for reliable data transmission over serial connections in resource-constrained embedded systems. URST provides automatic retransmission, error detection via CRC-16/CCITT-FALSE, frame delimiting through COBS encoding, and support for message fragmentation.
 
 ---
 
@@ -62,7 +62,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### 1.3 Protocol Overview
 
-URST implements a four-layer architecture providing reliable delivery over unreliable serial connections. The protocol uses stop-and-wait flow control with automatic retransmission, CRC-16 error detection, and COBS encoding for frame delimiting.
+URST implements a four-layer architecture providing reliable delivery over unreliable serial connections. The protocol uses stop-and-wait flow control with automatic retransmission, CRC error detection, and COBS encoding for frame delimiting.
 
 **Design Goals:**
 
@@ -87,7 +87,7 @@ URST implements four distinct layers:
 ├───────────────────────────────────┤
 │     Transport Layer (Framing)     │  Frame Type, Sequence Numbers
 ├───────────────────────────────────┤
-│    Codec Layer (Encoding/IO)      │  COBS, CRC-16, UART
+│    Codec Layer (Encoding/IO)      │  COBS, CRC, UART
 └───────────────────────────────────┘
 ```
 
@@ -124,7 +124,7 @@ The Transport Layer MUST provide:
 The Codec Layer MUST provide:
 
 - COBS encoding and decoding
-- CRC-16 calculation and verification
+- CRC-16/CCITT-FALSE calculation and verification
 - Frame delimiter insertion and detection
 - UART read/write operations
 - Receive buffer management
@@ -161,7 +161,7 @@ Physical Frame (after COBS encoding):
 All URST frames consist of a mandatory 2-byte header, optional payload, and 2-byte CRC:
 
 ```
-Frame = [Frame Type][Sequence Number][Payload (0-200 bytes)][CRC-16]
+Frame = [Frame Type][Sequence Number][Payload (0-200 bytes)][CRC]
         └────────── Header ─────────┘
 ```
 
@@ -213,9 +213,9 @@ The Payload field contains application data or protocol-specific information.
 
 **Note:** ACK and NAK frames echo the sequence number in the header (byte 1), not in the payload. The payload is empty for these frame types.
 
-#### 3.2.4 CRC-16 (2 bytes)
+#### 3.2.4 CRC (2 bytes)
 
-The CRC-16 field provides error detection for the frame.
+The CRC field provides error detection for the frame.
 
 **Requirements:**
 
@@ -233,7 +233,7 @@ The complete frame encoding process MUST follow these steps:
    logical_frame = [frame_type] + [seq_num] + payload
    ```
 
-2. **Calculate CRC-16:**
+2. **Calculate CRC-16/CCITT-FALSE:**
 
    ```
    crc16 = calculate_crc16(logical_frame)
@@ -267,13 +267,13 @@ The complete frame encoding process MUST follow these steps:
 - Maximum COBS overhead: 3 bytes (1 byte per 254 bytes + 1)
 - Maximum physical frame: 209 bytes (including delimiters)
 
-### 3.4 CRC-16 Algorithm Specification
+### 3.4 CRC-16/CCITT-FALSE Algorithm Specification
 
 #### 3.4.1 Algorithm Parameters
 
 | Parameter     | Value                         |
 | ------------- | ----------------------------- |
-| Algorithm     | CRC-16-CCITT                  |
+| Algorithm     | CRC-16/CCITT-FALSE            |
 | Polynomial    | 0x1021 (x¹⁶+x¹²+x⁵+1)         |
 | Initial Value | 0xFFFF                        |
 | Final XOR     | 0x0000 (none)                 |
@@ -309,8 +309,6 @@ def build_crc_table():
         table.append(crc)
     return table
 ```
-
-See Appendix B for test vectors.
 
 ### 3.5 COBS Encoding Specification
 
@@ -504,7 +502,7 @@ When transmitting a DATA frame, the sender MUST:
 When receiving a DATA frame, the receiver MUST:
 
 1. Validate COBS encoding (if invalid, silently discard)
-2. Validate CRC-16 (if invalid, silently discard)
+2. Validate CRC (if invalid, silently discard)
 3. Check sequence number:
    - If seq_num == expected_seq: Send ACK, deliver payload, advance expected_seq
    - If seq_num == last_received_seq: Send ACK, discard payload (duplicate)
@@ -734,7 +732,7 @@ A conformant URST implementation MUST:
 1. Implement all four protocol layers (Codec, Transport, Protocol, Handler)
 2. Support DATA, ACK, and NAK frame types
 3. Implement COBS encoding/decoding as specified in Section 3.5
-4. Implement CRC-16 calculation as specified in Section 3.4
+4. Implement CRC-16/CCITT-FALSE calculation as specified in Section 3.4
 5. Implement stop-and-wait flow control with retransmission
 6. Support MAX_PAYLOAD_SIZE of 200 bytes
 7. Implement sequence number management (0-255, wrapping)
@@ -760,7 +758,7 @@ For interoperability between implementations:
 
 - All implementations MUST use MAX_PAYLOAD_SIZE = 200 bytes
 - All implementations MUST implement identical COBS encoding
-- All implementations MUST implement identical CRC-16 calculation
+- All implementations MUST implement identical CRC calculation
 - All implementations MUST use little-endian byte order for CRC serialization
 - All implementations MUST use 0x00 as FRAME_DELIMITER
 
@@ -772,7 +770,7 @@ The following behaviors are explicitly NON-CONFORMANT:
 - Using sequence numbers > 255
 - Sending NAK in response to CRC failures
 - Accepting frames with invalid CRC
-- Modifying frame type values 0x01-0x03
+- Modifying frame type values 0x01-0xFF
 - Using frame type 0x00
 - Sending ACK/NAK frames with non-empty payloads
 - Failing to implement COBS encoding
@@ -797,7 +795,7 @@ URST does NOT provide:
 
 - Confidentiality: All data is transmitted in plaintext
 - Authentication: No verification of sender identity
-- Integrity protection: CRC-16 detects accidental corruption, not intentional tampering
+- Integrity protection: CRC-16/CCITT-FALSE detects accidental corruption, not intentional tampering
 
 **Recommendation:** Applications requiring security MUST implement encryption and authentication at a higher layer.
 
@@ -825,9 +823,9 @@ An attacker with access to the serial line could:
 
 **Recommendation:** Use physically secured serial connections or implement cryptographic authentication at a higher layer.
 
-### 8.5 CRC-16 Limitations
+### 8.5 CRC-16/CCITT-FALSE Limitations
 
-CRC-16 provides error detection but NOT cryptographic integrity:
+CRC-16/CCITT-FALSE provides error detection but NOT cryptographic integrity:
 
 - Detects accidental corruption with high probability
 - Does NOT protect against intentional modification
@@ -913,7 +911,7 @@ Use this checklist when implementing URST:
 
 ### A.1 Codec Layer
 
-- [ ] CRC-16-CCITT implemented with correct polynomial (0x1021)
+- [ ] CRC-16/CCITT-FALSE implemented with correct polynomial (0x1021)
 - [ ] CRC initial value is 0xFFFF
 - [ ] CRC serialized as little-endian
 - [ ] COBS encoding handles empty data (returns 0x01)
@@ -921,7 +919,6 @@ Use this checklist when implementing URST:
 - [ ] COBS decoding rejects embedded 0x00 bytes
 - [ ] Frame delimiters are 0x00
 - [ ] Receive buffer implements overflow protection
-- [ ] Test vectors from Appendix B pass
 
 ### A.2 Transport Layer
 
@@ -962,7 +959,6 @@ Use this checklist when implementing URST:
 - [ ] MAX_PAYLOAD_SIZE = 200 bytes
 - [ ] Works with reference implementation
 - [ ] Cross-platform tested (if applicable)
-- [ ] Test vectors produce identical results
 
 ---
 
@@ -1106,8 +1102,6 @@ This calculation accounts for each fragment potentially requiring all retry atte
 - Available RAM for fragment buffers
 - Timeout for fragment reassembly
 - Application requirements
-
-Tested up to several megabytes for firmware updates.
 
 ### Q13: How do I implement firmware updates over URST?
 

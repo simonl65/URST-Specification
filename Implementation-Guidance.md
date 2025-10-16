@@ -12,7 +12,7 @@ Implementers SHOULD build the protocol in layers:
 
 1. **Phase 1: Codec Layer**
 
-   - Implement CRC-16 calculation with lookup table
+   - Implement CRC-16/CCITT-FALSE calculation with lookup table
    - Implement COBS encoding and decoding
    - Implement frame delimiting
    - Test with known test vectors (Appendix B)
@@ -205,7 +205,7 @@ start = buffer.find(b'\x00')
 
 | Feature         | URST                  | SLIP                        |
 | --------------- | --------------------- | --------------------------- |
-| Error Detection | CRC-16                | None                        |
+| Error Detection | CRC-16/CCITT-FALSE    | None                        |
 | Reliability     | ACK/NAK with retries  | None                        |
 | Frame Delimiter | 0x00 (COBS encoded)   | 0xC0 (with escaping)        |
 | Overhead        | ~4-6 bytes + 4%       | 2-3 bytes                   |
@@ -224,7 +224,7 @@ start = buffer.find(b'\x00')
 | --------------- | --------------------- | ---------------- |
 | Frame Delimiter | 0x00                  | 0x7E             |
 | Encoding        | COBS                  | Bit stuffing     |
-| Error Detection | CRC-16                | CRC-16 or CRC-32 |
+| Error Detection | CRC-16/CCITT-FALSE    | CRC-16 or CRC-32 |
 | Flow Control    | Stop-and-wait         | Sliding window   |
 | Addressing      | None (point-to-point) | Supported        |
 | Complexity      | Low                   | High             |
@@ -239,15 +239,15 @@ start = buffer.find(b'\x00')
 
 ### 2.3 URST vs PPP (Point-to-Point Protocol)
 
-| Feature         | URST             | PPP                    |
-| --------------- | ---------------- | ---------------------- |
-| Layer           | Data link        | Data link + Network    |
-| Error Detection | CRC-16           | FCS (typically CRC-16) |
-| Reliability     | Built-in ACK/NAK | Optional (LCP)         |
-| Configuration   | Static           | Negotiated (LCP/NCP)   |
-| Authentication  | None             | PAP/CHAP               |
-| Compression     | None             | Optional               |
-| Complexity      | Low              | Very High              |
+| Feature         | URST               | PPP                    |
+| --------------- | ------------------ | ---------------------- |
+| Layer           | Data link          | Data link + Network    |
+| Error Detection | CRC-16/CCITT-FALSE | FCS (typically CRC-16) |
+| Reliability     | Built-in ACK/NAK   | Optional (LCP)         |
+| Configuration   | Static             | Negotiated (LCP/NCP)   |
+| Authentication  | None               | PAP/CHAP               |
+| Compression     | None               | Optional               |
+| Complexity      | Low                | Very High              |
 
 **When to use URST over PPP:**
 
@@ -260,7 +260,7 @@ start = buffer.find(b'\x00')
 
 | Feature           | URST                 | Modbus RTU             |
 | ----------------- | -------------------- | ---------------------- |
-| Error Detection   | CRC-16-CCITT         | CRC-16-Modbus          |
+| Error Detection   | CRC-16/CCITT-FALSE   | CRC-16-Modbus          |
 | Framing           | COBS + delimiters    | Timing-based           |
 | Addressing        | None                 | 1-247 device addresses |
 | Reliability       | ACK/NAK automatic    | Application-level      |
