@@ -2,18 +2,18 @@
 
 ![Status](https://img.shields.io/badge/status-draft-orange)
 
-**Version:** 0.3.2  
+**Version:** 0.3.3  
 **Status:** Draft  
-**Date:** 2025-10-13  
+**Date:** 2025-10-23  
 **Authors:** Simon R. Lincoln  
 **Copyright:** © 2025 Simon R. Lincoln  
-**License:** Specification is freely implementable; reference code under Sustainable Use License
+**License:** Specification is freely implementable; reference code under [Sustainable Use License](LICENSE.md)
 
 ---
 
 ## Abstract
 
-This document specifies the **Universal Reliable Serial Transport** (URST) protocol, a lightweight - _acknowledgment before next transmission_ - communication protocol designed for reliable data transmission over serial connections in resource-constrained embedded systems. URST provides automatic retransmission, error detection via CRC-16/CCITT-FALSE, frame delimiting through COBS encoding, and support for message fragmentation.
+This document specifies the **Universal Reliable Serial Transport** (URST) protocol, a lightweight - _**acknowledgment before next transmission**_ - communication protocol designed for reliable data transmission over serial connections in resource-constrained embedded systems. URST provides automatic retransmission, error detection via CRC-16/CCITT_FALSE, frame delimiting through COBS encoding, and support for message fragmentation.
 
 ---
 
@@ -42,7 +42,7 @@ Appendices:
 - [Appendix A. Specification Checklist](#appendix-a-specification-checklist)
 - [Appendix B. Future Protocol Extensions](#appendix-b-future-protocol-extensions)
 - [Appendix C. Questions & Answers](#appendix-c-questions-and-answers)
-- [CHANGELOG](#changelog)
+- [CHANGELOG](#appendix-d-change-log)
 
 ---
 
@@ -70,6 +70,9 @@ URST implements a four-layer architecture providing reliable delivery over unrel
 - Minimal overhead suitable for microcontrollers
 - Zero-byte-free encoding for robust frame delimiting
 - Support for large message fragmentation and reassembly
+- Clear connection establishment and capability negotiation for robust operation
+
+**Important:** URST is a strict stop-and-wait protocol. Implementations MUST enforce stop-and-wait semantics: a sender MUST NOT transmit a new DATA or FRAG frame until it has received the ACK/NAK (or an explicit READY when applicable) for the previously transmitted frame.
 
 ---
 
@@ -77,13 +80,12 @@ URST implements a four-layer architecture providing reliable delivery over unrel
 
 ### 2.1 Layer Model
 
-URST implements four distinct layers:
-
 ```
 ┌───────────────────────────────────┐
 │    Handler Layer (Application)    │  User API: send(), receive()
 ├───────────────────────────────────┤
-│     Protocol Layer (Reliable)     │  ACK/NAK, Retransmission
+│     Protocol Layer (Reliable)     │  CONNECT/ACK/NAK,
+|                                   |  Retransmission
 ├───────────────────────────────────┤
 │     Transport Layer (Framing)     │  Frame Type, Sequence Numbers
 ├───────────────────────────────────┤
@@ -101,6 +103,7 @@ The Handler Layer MUST provide:
 - Automatic fragmentation of messages exceeding MAX_PAYLOAD_SIZE
 - Reassembly of fragmented messages
 - Queueing of complete messages for application retrieval
+- Enforce "one concurrent fragment reassembly" policy (see §6.3.2)
 
 #### 2.2.2 Protocol Layer
 
@@ -110,6 +113,7 @@ The Protocol Layer MUST provide:
 - Sequence number management for duplicate detection
 - Retransmission logic with timeout and retry limits
 - ACK and NAK frame generation
+- Connection establishment and capability negotiation via CONNECT/CONNECT_ACK (see §5.6)
 
 #### 2.2.3 Transport Layer
 
@@ -124,10 +128,11 @@ The Transport Layer MUST provide:
 The Codec Layer MUST provide:
 
 - COBS encoding and decoding
-- CRC-16/CCITT-FALSE calculation and verification
+- CRC-16/CCITT_FALSE calculation and verification
 - Frame delimiter insertion and detection
 - UART read/write operations
 - Receive buffer management
+- On startup: clear receive buffer and attempt resynchronization (see §5.6.2)
 
 ---
 
@@ -154,7 +159,7 @@ Physical Frame (after COBS encoding):
  Delim        (no 0x00 bytes)        Delim
 ```
 
-**Important:** The sequence number is part of the frame **header**, not the payload. All frame types (DATA, ACK, NAK) include both Frame Type and Sequence Number in their 2-byte header.
+**Important:** The sequence number is part of the frame **header**, not the payload. All frame types include both Frame Type and Sequence Number in their 2-byte header unless otherwise specified (some control frames may carry capability payloads but still include the 2-byte header for CRC and addressing).
 
 ### 3.2 Frame Fields
 
@@ -169,22 +174,27 @@ Frame = [Frame Type][Sequence Number][Payload (0-200 bytes)][CRC]
 
 The Frame Type field identifies the purpose of the frame.
 
-| Type     | Value     | Description                       | Payload Size | Required |
-| -------- | --------- | --------------------------------- | ------------ | -------- |
-| DATA     | 0x01      | Application data frame            | 0-200 bytes  | MUST     |
-| ACK      | 0x02      | Acknowledgment (success)          | 0 bytes      | MUST     |
-| NAK      | 0x03      | Negative acknowledgment           | 0 bytes      | MUST     |
-| FRAG     | 0x04      | Fragmented message chunk (see §6) | 0-200 bytes  | MUST     |
-| Reserved | 0x00      | Invalid (zero byte)               | -            | -        |
-| Reserved | 0x05-0x0F | Reserved                          | -            | -        |
-| Reserved | 0x10-0xFF | Reserved for future use           | -            | -        |
+| Type        | Value     | Description                       | Payload Size | Required |
+| ----------- | --------- | --------------------------------- | ------------ | -------- |
+| DATA        | 0x01      | Application data frame            | 0-200 bytes  | MUST     |
+| ACK         | 0x02      | Acknowledgment (success)          | 0 bytes      | MUST     |
+| NAK         | 0x03      | Negative acknowledgment           | 0 bytes      | MUST     |
+| FRAG        | 0x04      | Fragmented message chunk (see §6) | 0-200 bytes  | MUST     |
+| CONNECT     | 0x05      | Connection establishment + caps   | 0-200 bytes  | MUST     |
+| CONNECT_ACK | 0x06      | Connection acknowledgment + caps  | 0-200 bytes  | MUST     |
+| ERROR       | 0x07      | Receiver error / capability info  | 0-200 bytes  | MUST     |
+| ABORT       | 0x08      | Abort transmission of message     | 0-16 bytes   | MUST     |
+| BUSY        | 0x09      | Receiver busy (pause sending)     | 0 bytes      | MUST     |
+| READY       | 0x0A      | Receiver ready (resume sending)   | 0 bytes      | MUST     |
+| Reserved    | 0x0B-0x20 | Reserved                          | -            | -        |
+| Reserved    | 0x21-0xFF | Reserved for application use      | -            | -        |
 
 **Requirements:**
 
-- Implementations MUST support DATA, ACK, NAK, and FRAG frame types
-- Implementations MUST silently discard frames with unknown frame types
-- Implementations MUST NOT use frame type 0x00
-- Frame types 0x05-0xFF are reserved for future protocol versions
+- Implementations MUST support DATA, ACK, NAK, FRAG, CONNECT, CONNECT_ACK, ERROR, ABORT, BUSY and READY frame types.
+- Implementations MUST silently discard frames with unknown frame types.
+- Implementations MUST NOT use frame type 0x00.
+- Implementations MAY use frame types marked "Reserved for application use" but MUST document any non-standard behavior.
 
 #### 3.2.2 Sequence Number (1 byte)
 
@@ -196,10 +206,11 @@ The Sequence Number field is an 8-bit counter (0-255) used for:
 
 **Requirements:**
 
-- Sequence numbers MUST increment by 1 for each new DATA frame transmission
+- Sequence numbers MUST increment by 1 for each new DATA or FRAG frame transmission
 - Sequence numbers MUST wrap from 255 to 0
 - Retransmissions MUST use the same sequence number as the original
 - ACK and NAK frames MUST use the sequence number of the frame being acknowledged
+- On connection establishment (CONNECT/CONNECT_ACK) both sides' sequence numbers MUST be reset to 0 (see §5.6)
 
 #### 3.2.3 Payload (0-200 bytes)
 
@@ -208,10 +219,9 @@ The Payload field contains application data or protocol-specific information.
 **Requirements:**
 
 - Payload size MUST NOT exceed MAX_PAYLOAD_SIZE (200 bytes)
-- ACK and NAK frames MUST have empty payloads (0 bytes after the header)
+- ACK, NAK, BUSY, and READY frames MUST have empty payloads (0 bytes after the 2-byte header)
 - DATA frames MAY have empty payloads (header only)
-
-**Note:** ACK and NAK frames echo the sequence number in the header (byte 1), not in the payload. The payload is empty for these frame types.
+- CONNECT/CONNECT_ACK/ERROR/ABORT frames carry structured payloads defined in their sections
 
 #### 3.2.4 CRC (2 bytes)
 
@@ -219,7 +229,7 @@ The CRC field provides error detection for the frame.
 
 **Requirements:**
 
-- CRC MUST be calculated over Frame Type + Sequence Number + Payload
+- CRC MUST be calculated over Frame Type + Sequence Number + Payload (i.e., the full logical frame) BEFORE COBS encoding. The CRC bytes are appended to that logical frame and the combined bytes are then COBS-encoded. This is explicit: CRC is over the pre-COBS logical frame.
 - CRC MUST use the algorithm specified in Section 3.4
 - CRC MUST be serialized in little-endian byte order
 
@@ -227,37 +237,37 @@ The CRC field provides error detection for the frame.
 
 The complete frame encoding process MUST follow these steps:
 
-1. **Construct Logical Frame:**
+1. Construct Logical Frame:
 
    ```
    logical_frame = [frame_type] + [seq_num] + payload
    ```
 
-2. **Calculate CRC-16/CCITT-FALSE:**
+2. Calculate CRC-16/CCITT_FALSE (over that logical_frame):
 
    ```
    crc16 = calculate_crc16(logical_frame)
    ```
 
-3. **Append CRC (little-endian):**
+3. Append CRC (little-endian):
 
    ```
    frame_with_crc = logical_frame + [crc16 & 0xFF] + [(crc16 >> 8) & 0xFF]
    ```
 
-4. **Apply COBS Encoding:**
+4. Apply COBS Encoding:
 
    ```
    encoded_data = cobs_encode(frame_with_crc)
    ```
 
-5. **Add Frame Delimiters:**
+5. Add Frame Delimiters:
 
    ```
    physical_frame = [0x00] + encoded_data + [0x00]
    ```
 
-6. **Transmit via UART**
+6. Transmit via UART
 
 **Frame Size Calculations:**
 
@@ -267,13 +277,13 @@ The complete frame encoding process MUST follow these steps:
 - Maximum COBS overhead: 3 bytes (1 byte per 254 bytes + 1)
 - Maximum physical frame: 209 bytes (including delimiters)
 
-### 3.4 CRC-16/CCITT-FALSE Algorithm Specification
+### 3.4 CRC-16/CCITT_FALSE Algorithm Specification
 
 #### 3.4.1 Algorithm Parameters
 
 | Parameter     | Value                         |
 | ------------- | ----------------------------- |
-| Algorithm     | CRC-16/CCITT-FALSE            |
+| Algorithm     | CRC-16/CCITT_FALSE            |
 | Polynomial    | 0x1021 (x¹⁶+x¹²+x⁵+1)         |
 | Initial Value | 0xFFFF                        |
 | Final XOR     | 0x0000 (none)                 |
@@ -405,10 +415,13 @@ def cobs_decode(data):
     │     │                       │        │
     │     │                  SENDING       │
     │     │                                │
+    │     ├──►[BUSY received] ──→ PAUSED   │
+    │     │         │                      │
+    │     │         └───►[READY received] ─┘
+    │     │
     │     ├──►[Timeout] ──────→ retry++    │
     │     │         │                      │
     │     │         └─────►[retry < MAX] ──┤
-    │     │                                │
     │     │                                │
     │     └──►[retry >= MAX] ──→ FAILED    │
     │                              │       │
@@ -418,13 +431,15 @@ def cobs_decode(data):
                               Return to IDLE
 ```
 
-**State Descriptions:**
+**State Notes:**
 
 - **IDLE**: Waiting for data to send
 - **SENDING**: Transmitting frame to UART
 - **WAITING_ACK**: Waiting for ACK/NAK or timeout
 - **SUCCESS**: Frame acknowledged, operation complete
 - **FAILED**: Maximum retries exceeded
+- **BUSY** causes the sender to pause retransmit attempts; READY resumes.
+- Stop-and-wait is strictly enforced: the sender MUST NOT send a new DATA or FRAG frame until ACK/NAK is received or the sender receives READY after BUSY.
 
 ### 4.2 Receiver State Machine
 
@@ -488,14 +503,16 @@ def cobs_decode(data):
 
 When transmitting a DATA frame, the sender MUST:
 
-1. Assign a sequence number using the next value in sequence (0-255, wrapping)
-2. Construct the frame with DATA frame type
-3. Encode and transmit the frame
-4. Start a timeout timer (DEFAULT_TIMEOUT_MS)
-5. Wait for ACK or NAK response
-6. On timeout or NAK: increment retry counter and retransmit if retry < MAX_RETRIES
-7. On ACK: consider transmission successful
-8. After MAX_RETRIES failures: report failure to application layer
+1.  Assign a sequence number using the next value in sequence (0-255, wrapping)
+2.  Construct the frame with DATA frame type
+3.  Encode and transmit the frame
+4.  Start a timeout timer (ACK_TIMEOUT_MS)
+5.  Wait for ACK or NAK response (or READY after BUSY)
+6.  On timeout or NAK: increment retry counter and retransmit if retry < MAX_RETRIES
+7.  On ACK: consider transmission successful
+8.  After MAX_RETRIES failures: report failure to application layer
+9.  The sender MUST NOT advance its sequence number until a successful ACK
+10. The sender MUST NOT send a new DATA or FRAG frame until the previous frame is acknowledged (strict stop-and-wait)
 
 #### 5.1.2 Receiver Requirements
 
@@ -519,7 +536,7 @@ An ACK frame MUST be sent when:
 
 ACK frames MUST:
 
-- Use frame type FRAME_ACK (0x02)
+- Use frame type ACK (0x02)
 - Have an empty payload (0 bytes after the 2-byte header)
 - Echo the sequence number of the acknowledged DATA frame in byte 1 of the header
 
@@ -531,7 +548,7 @@ A NAK frame MUST be sent when:
 
 NAK frames MUST:
 
-- Use frame type FRAME_NAK (0x03)
+- Use frame type NAK (0x03)
 - Have an empty payload (0 bytes after the 2-byte header)
 - Echo the sequence number of the rejected DATA frame in byte 1 of the header
 
@@ -563,6 +580,13 @@ When COBS decoding fails (e.g., embedded 0x00 byte in encoded data):
 - The receiver MUST NOT attempt further processing
 - The sender will detect the missing ACK via timeout and retransmit
 
+If repeated consecutive COBS decode failures occur, both sides SHOULD log/resync and verify baud rate.
+
+Implementations MUST implement a configurable threshold for consecutive COBS failures
+
+- default threshold is 5
+- when threshold reached, implementations SHOULD attempt resynchronization (clear buffers and perform CONNECT if supported)
+
 #### 5.3.3 Sequence Number Mismatches
 
 When a DATA frame has an unexpected sequence number:
@@ -581,21 +605,25 @@ When a DATA frame has an unexpected sequence number:
 - Receiver MUST NOT advance expected_seq
 - This indicates protocol desynchronization
 
+Note: Because URST is strictly stop-and-wait, out-of-order frames outside duplicate/expected cases indicate a sender or receiver desynchronization that MUST be resolved via connection re-establishment (CONNECT) or application-level recovery.
+
 #### 5.3.4 Timeout Handling
 
-When a sender does not receive an ACK or NAK within DEFAULT_TIMEOUT_MS:
+When a sender does not receive an ACK or NAK within ACK_TIMEOUT_MS:
 
 - The sender MUST increment its retry counter
 - If retry_count < MAX_RETRIES: retransmit with the same sequence number
 - If retry_count >= MAX_RETRIES: report failure to application layer
 - The sender MUST NOT advance its sequence number until successful ACK
 
+When the receiver sends BUSY, the sender MUST pause further retransmission attempts until it receives READY or until the normal timeout/retry logic applies. BUSY is not an ACK — the sender must not treat BUSY as successful delivery.
+
 #### 5.3.5 Receive Buffer Overflow
 
 When the receive buffer exceeds RX_BUFFER_SIZE:
 
 - Implementations MUST discard data to prevent memory exhaustion
-- Implementations SHOULD clear the entire buffer to avoid partial frame corruption
+- Implementations MUST clear the entire buffer to avoid partial frame corruption
 - Implementations MAY implement alternative strategies (e.g., discard oldest complete frame) but MUST document this deviation
 - Lost frames will be recovered through sender retransmission after timeout
 
@@ -603,28 +631,110 @@ When the receive buffer exceeds RX_BUFFER_SIZE:
 
 URST implements stop-and-wait flow control:
 
-- Window size: 1 frame
+- Window size: 1 frame (strict)
 - Sender MUST wait for ACK before sending next frame
 - Receiver processes one frame at a time
-- This provides reliable delivery at the cost of throughput
+- BUSY (0x09) and READY (0x10) are provided for application-level flow control:
+  - BUSY indicates receiver cannot process application deliveries; the sender MUST pause sending new frames (and MAY pause retry attempts as described in §5.3.4).
+  - READY indicates receiver can resume sending.
+  - BUSY and READY frames have empty payloads and are NOT acknowledged.
 
-**Rationale:** Stop-and-wait is simple, requires minimal state, and is appropriate for resource-constrained microcontrollers. Future versions MAY define sliding window extensions.
+**Rationale:** Stop-and-wait is simple, requires minimal state, and is appropriate for resource-constrained microcontrollers. The specification mandates strict stop-and-wait semantics for interoperability.
 
 ### 5.5 Protocol Constants
 
-| Constant           | Value | Description                   | Configurable |
-| ------------------ | ----- | ----------------------------- | ------------ |
-| MAX_RETRIES        | 3     | Maximum transmission attempts | SHOULD       |
-| DEFAULT_TIMEOUT_MS | 1000  | ACK timeout in milliseconds   | SHOULD       |
-| MAX_PAYLOAD_SIZE   | 200   | Maximum payload bytes         | MUST NOT     |
-| RX_BUFFER_SIZE     | 512   | Receive buffer size in bytes  | MAY          |
+| Constant               | Value | Description                      | Configurable |
+| ---------------------- | ----- | -------------------------------- | ------------ |
+| MAX_RETRIES            | 3     | Maximum transmission attempts    | SHOULD       |
+| ACK_TIMEOUT_MS         | 1000  | ACK timeout in milliseconds      | SHOULD       |
+| MAX_PAYLOAD_SIZE       | 200   | Maximum payload bytes            | MAY          |
+| RX_BUFFER_SIZE         | 512   | Receive buffer size in bytes     | MAY          |
+| MAX_MSG_BYTES          | 8192  | Maximum message bytes advertised | MAY          |
+| MAX_FRAGMENTS          | 32    | Maximum fragments per message    | MAY          |
+| CONSECUTIVE_COBS_FAILS | 5     | Consecutive COBS fails threshold | MAY          |
 
 **Requirements:**
 
-- Implementations MUST use MAX_PAYLOAD_SIZE of 200 bytes for interoperability
+- Implementations MUST use identical MAX_PAYLOAD_SIZE for interoperability
 - Implementations SHOULD support at least 3 retries
 - Implementations SHOULD use 1000ms timeout as default but MAY allow configuration
-- Implementations MAY configure RX_BUFFER_SIZE based on available memory
+- Implementations MUST implement fragment timeout (see §6.3.4)
+- Implementations MUST support CONNECT capability negotiation (see §5.6)
+
+### 5.6 Connection Establishment and Capabilities
+
+URST has a mandatory connection establishment handshake. The handshake MUST be used:
+
+- Immediately upon first data transmission (sending endpoint MUST send CONNECT when ready to communicate)
+- Whenever either side detects persistent desynchronization that cannot be resolved via existing ACK/NAK/timeout logic
+- To negotiate capabilities before sending fragmented messages or large transfers
+
+CONNECT (0x05) and CONNECT_ACK (0x06) frames carry a machine-readable capabilities payload.
+
+#### 5.6.1 CONNECT Payload (machine-readable)
+
+CONNECT payload structure:
+
+| Bytes | Description                              | Meaning                                  |
+| ----: | :--------------------------------------- | :--------------------------------------- |
+|     0 | protocol_version (uint8)                 | e.g., 4 for 0.3.4                        |
+|   1-2 | max_message_bytes (uint16 little-endian) | max bytes receiver can reassemble        |
+|     3 | max_fragments_per_message (uint8)        | max fragments receiver will accept       |
+|     4 | max_concurrent_message_ids (uint8)       | must be 1 for conformant implementations |
+|   5-6 | ack_timeout_ms (uint16 LE)               | receiver's preferred timeout             |
+|     7 | max_retries (uint8)                      | receiver's preferred max retries         |
+|     8 | reserved                                 |                                          |
+
+- Implementations MUST set max_concurrent_message_ids to 1 to be conformant.
+- The capability exchange follows the "least capable wins" rule: after CONNECT/CONNECT_ACK, peers MUST use the minimum of the two sides' advertised limits for subsequent operations (e.g., max_fragments = min(local, remote)).
+
+#### 5.6.2 CONNECT Sequence and Effects
+
+- When a CONNECT is received and accepted, the recipient MUST respond with CONNECT_ACK containing its capabilities.
+- Both sides MUST reset sequence numbers to 0 upon successful CONNECT/CONNECT_ACK exchange.
+- Upon CONNECT, both sides MUST clear reassembly buffers and reset fragment state for all Message IDs.
+- Implementations MUST send CONNECT on startup; if a peer does not respond within ACK_TIMEOUT_MS, implementations SHOULD retry CONNECT up to MAX_RETRIES before reporting failure to application.
+
+#### 5.6.3 Capability Query Requirement
+
+- Senders SHOULD query receiver capabilities using CONNECT before sending messages that could exceed default limits (e.g., large fragmented transfers) or when resynchronization is required.
+
+### 5.7 ERROR, ABORT, BUSY and READY semantics
+
+#### 5.7.1 ERROR Frame (0x07)
+
+ERROR frames allow a receiver to communicate error conditions and capability limitations to the sender.
+
+ERROR payload format (structured):
+
+|             Bytes | Description                        | Meaning                            |
+| ----------------: | :--------------------------------- | :--------------------------------- |
+|                 0 | error_code (uint8)                 |                                    |
+|               1-2 | max_message_bytes (uint16 LE)      | advertised capability; 0 = no info |
+|                 3 | max_fragments_per_message (uint8)  | 0 = no info                        |
+|                 4 | max_concurrent_message_ids (uint8) | 0 = no info                        |
+|                 5 | text_len (uint8)                   |                                    |
+| 6..(6+text_len-1) | UTF-8 text (human-readable)        |                                    |
+
+- error_code 0x01 = CAPABILITY_EXCEEDED (used when sender attempted to exceed receiver's reassembly/capacity)
+- Implementations MUST interpret max\_\* fields when non-zero and adjust behavior accordingly.
+- ERROR frames MUST be sent when a receiver rejects a fragment set or other request due to capacity limits.
+- ERROR frames use the same framing and CRC rules as other frames.
+
+#### 5.7.2 ABORT Frame (0x08)
+
+- ABORT is used by a sender or receiver to explicitly abort an in-progress fragmented message transfer.
+- ABORT may carry a 1-byte reason code; payload length MUST be 0 or 1.
+- ABORT frames MAY be acknowledged by an ACK but are not required to be acknowledged.
+- Upon sending or receiving ABORT for Message ID X, both sides MUST discard all fragments and reassembly state for that Message ID.
+
+#### 5.7.3 BUSY (0x09) and READY (0x10)
+
+- BUSY indicates the receiver is temporarily unable to deliver incoming frames to the application layer.
+- Upon receiving BUSY, the sender MUST pause further transmissions for new frames.
+  - The sender SHOULD pause retries for the in-flight frame (implementation choice) and MUST NOT treat BUSY as an ACK.
+- READY indicates the receiver can resume normal reception and processing.
+- BUSY and READY frames have empty payloads and are not acknowledged.
 
 ---
 
@@ -639,13 +749,15 @@ When application data exceeds the available payload space (accounting for protoc
 Fragmented messages use FRAG frames with a specific payload structure:
 
 ```
- 0                   1                   2                   3
- 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+
+0 1 2 3
+0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +---------------+---------------+---------------+---------------+
 |   Message ID  | Fragment Num  | Total Frags   |  Data Length  |
 +---------------+---------------+---------------+---------------+
-|                    Fragment Data (0-194 bytes)                |
+|                  Fragment Data (0-194 bytes)|                 |
 +---------------------------------------------------------------+
+
 ```
 
 **Field Descriptions:**
@@ -663,26 +775,31 @@ Fragmented messages use FRAG frames with a specific payload structure:
 When fragmenting a message, the sender MUST:
 
 1. Check if message size exceeds (MAX_PAYLOAD_SIZE - 6) bytes
-2. Assign a unique Message ID (incrementing counter, wrapping 0-255)
-3. Calculate required fragments: `total_frags = ceil(msg_len / 194)`
+2. Assign a Message ID (incrementing counter, wrapping 0-255)
+3. Calculate required fragments: `total_frags = ceil(msg_len / (MAX_PAYLOAD_SIZE - 6))`
 4. For each fragment (i = 0 to total_frags - 1):
-   - Extract fragment data: `data[i * 194 : (i+1) * 194]`
+   - Extract fragment data: `data[i * (MAX_PAYLOAD_SIZE - 6) : (i+1) * (MAX_PAYLOAD_SIZE - 6)]`
    - Construct fragment header: `[msg_id][i][total_frags][len(fragment_data)]`
    - Send fragment + header in a FRAG frame using reliable delivery (ACK/NAK)
-5. Only proceed to next fragment after successful ACK
-6. Report failure to application if any fragment fails after MAX_RETRIES
+5. Only proceed to next fragment after successful ACK for the current fragment (strict sequential send)
+6. Senders MUST NOT begin sending fragments for a new Message ID until the previous Message ID's fragments have been completed (MUST NOT interleave)
+7. If a sender is unable to continue a fragmented transfer, it MUST send ABORT (0x08) for that Message ID
 
-**Maximum Fragment Data Size:** MAX_PAYLOAD_SIZE - 6 = 194 bytes
+**Default Maximum Fragment Data Size:** MAX_PAYLOAD_SIZE - 6 = 194 bytes
 
 #### 6.3.2 Receiver Requirements
 
 When receiving fragments, the receiver MUST:
 
-1. Process only FRAG frames for fragmentation
+1. Only accept FRAG frames in the FRAG code path
 2. Extract fragment header fields
-3. Store fragment in reassembly buffer keyed by Message ID
-4. Track received fragment count per Message ID
-5. When all fragments received (received_count == total_frags):
+3. Only accept fragments for one Message ID at a time (max_concurrent_message_ids == 1)
+4. If a fragment arrives with a Message ID not equal to the currently open reassembly ID:
+   - If no reassembly in progress, begin reassembly for that Message ID
+   - If reassembly is in progress for a different Message ID, the incoming fragment MUST be rejected; receiver MUST send ERROR with error_code=CAPABILITY_EXCEEDED (0x01) and include max_concurrent_message_ids (1) in ERROR payload
+5. Store fragment in reassembly buffer keyed by Message ID
+6. Track received fragment count per Message ID
+7. When all fragments received (received_count == total_frags):
    - Reassemble message by concatenating fragments in order (0 to total-1)
    - Deliver complete message to application
    - Clear reassembly buffer for this Message ID
@@ -690,29 +807,27 @@ When receiving fragments, the receiver MUST:
 #### 6.3.3 Fragment Ordering
 
 - Fragments MUST be transmitted in order (0, 1, 2, ...)
-- Receivers MUST NOT assume fragments arrive in order
+- Receivers SHOULD NOT assume fragments arrive in order, but because senders MUST send sequentially and wait for ACK, in practice fragments should arrive in order
 - Receivers MUST store fragments and reassemble based on Fragment Num
-- Missing fragments will be retransmitted by reliable delivery mechanism
 
 #### 6.3.4 Incomplete Message Timeout
 
-Implementations SHOULD implement a timeout mechanism for incomplete fragmented messages:
+Implementations MUST implement a timeout mechanism for incomplete fragmented messages:
 
-- If fragments for a Message ID are not completed within a reasonable time, discard them
-- Recommended timeout calculation:
+- If fragments for a Message ID are not completed within `fragment_timeout`, discard them
+- Required default timeout calculation:
 
-  ```
-  fragment_timeout = max_expected_fragments * (MAX_RETRIES + 1) * DEFAULT_TIMEOUT_MS
+```
+fragment_timeout = total_frags * (MAX_RETRIES + 1) * ACK_TIMEOUT_MS
+Example for 10 fragments:
+fragment_timeout = 10 * (3 + 1) \_ 1000ms = 40,000ms = 40 seconds
 
-  Example for 10 fragments:
-  fragment_timeout = 10 * (3 + 1) * 1000ms = 40,000ms = 40 seconds
-  ```
+```
 
 - This prevents memory exhaustion from incomplete messages
-- The multiplier `(MAX_RETRIES + 1)` accounts for initial attempt plus all retries
-- Applications MAY use shorter timeouts if maximum message size is known
+- If the last fragment is never received and the sender exhausts retransmissions, the fragment timeout MUST cause receiver to discard the incomplete message and free memory
 
-**Rationale:** Each fragment requires up to `(MAX_RETRIES + 1) * DEFAULT_TIMEOUT_MS` in the worst case (initial transmission plus all retries). The total timeout should accommodate all expected fragments.
+**Rationale:** Each fragment requires up to `(MAX_RETRIES + 1) * ACK_TIMEOUT_MS` in the worst case (initial transmission plus all retries). The total timeout should accommodate all expected fragments.
 
 ### 6.4 Fragment Detection
 
@@ -730,17 +845,24 @@ Single-frame messages (< 194 bytes payload) MUST NOT use fragment headers. Recei
 A conformant URST implementation MUST:
 
 1. Implement all four protocol layers (Codec, Transport, Protocol, Handler)
-2. Support DATA, ACK, and NAK frame types
+2. Support DATA, ACK, NAK, FRAG, CONNECT, CONNECT_ACK, ERROR, ABORT, BUSY, READY frame types
 3. Implement COBS encoding/decoding as specified in Section 3.5
-4. Implement CRC-16/CCITT-FALSE calculation as specified in Section 3.4
-5. Implement stop-and-wait flow control with retransmission
-6. Support MAX_PAYLOAD_SIZE of 200 bytes
-7. Implement sequence number management (0-255, wrapping)
+4. Implement CRC-16/CCITT_FALSE calculation as specified in Section 3.4
+5. Implement strict stop-and-wait flow control with retransmission (the sender MUST NOT send a new frame until previous is ACKed or READY is received after BUSY)
+6. Support MAX_PAYLOAD_SIZE identical for each participating device (default 200 bytes)
+7. Implement sequence number management (0-255, wrapping) and reset sequence to 0 on successful CONNECT
 8. Support at least MAX_RETRIES (3) transmission attempts
 9. Implement timeout-based retransmission
 10. Handle CRC failures by silent discard
 11. Handle sequence mismatches per Section 5.3.3
-12. Implement fragmentation and reassembly per Section 6
+12. Implement fragmentation and reassembly per Section 6, including:
+
+- Only one concurrent Message ID supported
+- Fragments MUST NOT be interleaved
+- Fragment timeout MUST be implemented
+
+13. Implement CONNECT/CONNECT_ACK capability negotiation on startup and on resynchronization
+14. Clear receive buffers on initialization and attempt resynchronization by discarding until the next 0x00 delimiter
 
 ### 7.2 Optional Features
 
@@ -749,8 +871,7 @@ Conformant implementations MAY optionally:
 1. Implement configurable timeout values
 2. Implement configurable retry counts
 3. Implement receive buffer sizes larger than 512 bytes
-4. Implement incomplete fragment timeout mechanisms
-5. Define custom frame types in reserved range (0x10-0xFF) for application-specific purposes (non-interoperable)
+4. Define custom frame types in reserved range (0x21-0xFF) for application-specific purposes (non-interoperable)
 
 ### 7.3 Interoperability Requirements
 
@@ -761,6 +882,7 @@ For interoperability between implementations:
 - All implementations MUST implement identical CRC calculation
 - All implementations MUST use little-endian byte order for CRC serialization
 - All implementations MUST use 0x00 as FRAME_DELIMITER
+- CONNECT capability negotiation MUST be used and the "least capable wins" rule applied
 
 ### 7.4 Non-Conformant Behavior
 
@@ -770,12 +892,14 @@ The following behaviors are explicitly NON-CONFORMANT:
 - Using sequence numbers > 255
 - Sending NAK in response to CRC failures
 - Accepting frames with invalid CRC
-- Modifying frame type values 0x01-0xFF
+- Modifying frame type values 0x01-0x20
 - Using frame type 0x00
 - Sending ACK/NAK frames with non-empty payloads
 - Failing to implement COBS encoding
 - Implementing different CRC algorithms
 - Using big-endian byte order for CRC serialization
+- Fragment interleaving (starting a new Message ID before previous is complete)
+- Accepting more than one concurrent Message ID
 
 ---
 
@@ -793,9 +917,9 @@ URST is designed for point-to-point serial communication and assumes:
 
 URST does NOT provide:
 
-- Confidentiality: All data is transmitted in plaintext
-- Authentication: No verification of sender identity
-- Integrity protection: CRC-16/CCITT-FALSE detects accidental corruption, not intentional tampering
+- **Confidentiality**: All data is transmitted in plaintext
+- **Authentication**: No verification of sender identity
+- **Integrity protection**: CRC-16/CCITT_FALSE detects accidental corruption, not intentional tampering
 
 **Recommendation:** Applications requiring security MUST implement encryption and authentication at a higher layer.
 
@@ -809,8 +933,8 @@ Potential DoS vulnerabilities:
 
 **Mitigations:**
 
-- Implementations SHOULD implement rate limiting
-- Implementations SHOULD timeout and discard incomplete fragments
+- Implementations SHOULD implement rate limiting where possible
+- Implementations MUST implement fragment timeouts and single concurrent Message ID to limit memory usage
 - Receive buffer overflow protection is REQUIRED (Section 5.3.5)
 
 ### 8.4 Frame Injection
@@ -823,13 +947,15 @@ An attacker with access to the serial line could:
 
 **Recommendation:** Use physically secured serial connections or implement cryptographic authentication at a higher layer.
 
-### 8.5 CRC-16/CCITT-FALSE Limitations
+### 8.5 CRC-16/CCITT_FALSE Limitations
 
-CRC-16/CCITT-FALSE provides error detection but NOT cryptographic integrity:
+CRC-16/CCITT_FALSE provides error detection but NOT cryptographic integrity:
 
 - Detects accidental corruption with high probability
 - Does NOT protect against intentional modification
 - An attacker can modify data and recalculate valid CRC
+
+**Recommendation:** Use a mechanism (perhaps similar to JWT) to detect data tampering.
 
 ### 8.6 Sequence Number Prediction
 
@@ -837,7 +963,7 @@ The 8-bit sequence number is predictable:
 
 - Sequences are sequential and wrap at 255
 - An attacker could inject frames with predicted sequence numbers
-- This is mitigated by physical security of the serial connection
+- This is mitigated by using CONNECT handshakes on resynchronization
 
 ### 8.7 Recommendations for Secure Applications
 
@@ -855,9 +981,9 @@ Applications requiring security SHOULD:
 
 ## 9. IANA Considerations
 
-This protocol does not require any IANA registrations. Frame type values are defined in Section 3.2.1.
+This protocol does not require IANA registrations. Frame type values are defined in Section 3.2.1.
 
-Frame types 0x04-0xFF are reserved for future versions of this specification. Implementations MAY use values 0x10-0xFF for application-specific purposes but such usage is non-standard and will not be interoperable with conformant implementations.
+Frame types 0x0B-0x20 and 0x21-0xFF are reserved for future use. Implementations MUST NOT reuse 0x00 and MUST implement the defined frame types for interoperability.
 
 ---
 
@@ -865,18 +991,18 @@ Frame types 0x04-0xFF are reserved for future versions of this specification. Im
 
 ### 10.1 Normative References
 
-**[RFC2119]**  
-Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.  
+**[RFC2119]**
+Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.
 https://www.rfc-editor.org/rfc/rfc2119
 
-**[COBS]**  
-Cheshire, S. and Baker, M., "Consistent Overhead Byte Stuffing", IEEE/ACM Transactions on Networking, Vol. 7, No. 2, April 1999.  
+**[COBS]**
+Cheshire, S. and Baker, M., "Consistent Overhead Byte Stuffing", IEEE/ACM Transactions on Networking, Vol. 7, No. 2, April 1999.
 https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
 
 ### 10.2 Informative References
 
-**[CRC]**  
-"Cyclic Redundancy Check", Wikipedia.  
+**[CRC]**
+"Cyclic Redundancy Check", Wikipedia.
 https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 
 ---
@@ -901,17 +1027,13 @@ https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 
 ---
 
-**End of Specification**
-
----
-
 ## Appendix A. Specification Checklist
 
 Use this checklist when implementing URST:
 
 ### A.1 Codec Layer
 
-- [ ] CRC-16/CCITT-FALSE implemented with correct polynomial (0x1021)
+- [ ] CRC-16/CCITT_FALSE implemented with correct polynomial (0x1021)
 - [ ] CRC initial value is 0xFFFF
 - [ ] CRC serialized as little-endian
 - [ ] COBS encoding handles empty data (returns 0x01)
@@ -919,15 +1041,17 @@ Use this checklist when implementing URST:
 - [ ] COBS decoding rejects embedded 0x00 bytes
 - [ ] Frame delimiters are 0x00
 - [ ] Receive buffer implements overflow protection
+- [ ] Implementation clears receive buffer on init and attempts resync
 
 ### A.2 Transport Layer
 
 - [ ] Frame header is exactly 2 bytes [type][seq]
-- [ ] Frame type values 0x01-0x03 implemented
+- [ ] Non-reserved frame type values implemented as required
 - [ ] Unknown frame types silently discarded
 - [ ] Frame type 0x00 never used
 - [ ] Sequence numbers wrap correctly (255 → 0)
 - [ ] Sequence number management implemented
+- [ ] CONNECT capability negotiation implemented
 
 ### A.3 Protocol Layer
 
@@ -943,6 +1067,7 @@ Use this checklist when implementing URST:
 - [ ] Timeout mechanism implemented (1000ms default)
 - [ ] Retry counter implemented (MAX_RETRIES=3)
 - [ ] Sender waits for ACK before next frame
+- [ ] BUSY/READY flow-control implemented
 
 ### A.4 Handler Layer
 
@@ -951,14 +1076,16 @@ Use this checklist when implementing URST:
 - [ ] Each fragment sent with reliable delivery
 - [ ] Fragment reassembly buffer implemented
 - [ ] Complete message detection works
-- [ ] Fragment timeout implemented (optional but recommended)
+- [ ] Fragment timeout implemented (REQUIRED)
 - [ ] Non-fragmented messages detected correctly
+- [ ] Only one concurrent Message ID supported
 
 ### A.5 Interoperability
 
 - [ ] MAX_PAYLOAD_SIZE = 200 bytes
 - [ ] Works with reference implementation
 - [ ] Cross-platform tested (if applicable)
+- [ ] CONNECT handshake and capability negotiation validated
 
 ---
 
@@ -976,54 +1103,16 @@ Replace stop-and-wait with selective repeat ARQ:
 - Out-of-order delivery support
 - Reduced latency for bulk transfers
 
-#### B.1.2 Connection Establishment
-
-Add handshake frames:
-
-- CONNECT / CONNECT_ACK
-- Protocol version negotiation
-- Parameter exchange (window size, timeout, etc.)
-
-#### B.1.3 Compression
+#### B.1.2 Compression
 
 Optional payload compression:
 
 - Frame type indicating compressed data
 - Negotiated compression algorithm
-- Beneficial for repetitive data patterns
 
-#### B.1.4 Timestamps
+#### B.1.3 Timestamps
 
-Add optional timestamp field:
-
-- Latency measurement
-- Replay attack detection
-- Synchronization support
-
-### B.2 Reserved Frame Types for Extensions
-
-Frame types 0x05-0x40, inclusive, are reserved for future use. Potential allocations:
-
-```
-0x05-0x1F: Reserved for possible firmware update protocol
-0x20: CONNECT (connection establishment)
-0x21: CONNECT_ACK (connection acknowledgment)
-0x22: DISCONNECT (graceful disconnect)
-0x23: KEEPALIVE (connection keepalive)
-0x24: COMPRESSED_DATA (compressed payload)
-0x25: ENCRYPTED_DATA (encrypted payload)
-0x26: TIMESTAMPED_DATA (data with timestamp)
-0x27-0x40: Reserved for future use
-0x41-0xFF: Available for application-specific use
-```
-
-### B.3 Backward Compatibility
-
-Future versions MUST maintain backward compatibility:
-
-- Version 0.2.0 implementations MUST interoperate with 0.3.0
-- Optional features MUST be negotiated during connection
-- Implementations MUST gracefully handle unknown frame types
+Add optional timestamp field for latency measurement and replay detection.
 
 ---
 
@@ -1035,67 +1124,36 @@ Future versions MUST maintain backward compatibility:
 
 ### Q2: Why CRC-16 instead of CRC-32?
 
-**A:** CRC-16 provides excellent error detection (detects all single and double bit errors) while using less bandwidth. For typical serial communication error rates, CRC-16 is sufficient. CRC-32 could be added in future versions for critical applications.
+**A:** CRC-16 provides error detection with low overhead and is sufficient for typical serial links for this lightweight protocol.
 
 ### Q3: Why stop-and-wait instead of sliding window?
 
-**A:** Simplicity and minimal state requirements. For typical microcontroller applications, the throughput is adequate. Sliding window may be added in future versions.
+**A:** Stop-and-wait is simple and minimal-state; this specification mandates strict stop-and-wait semantics for version compatibility. Sliding window is a possible future extension.
 
 ### Q4: Can I use URST over other transports (USB, TCP, etc.)?
 
-**A:** Yes, but it's designed for serial UART. Over TCP, the reliability is redundant. Over USB-CDC, it works but you may want to adjust timeouts.
+**A:** Yes, but it's designed for serial UART.
 
-### Q5: What baud rates are supported?
+### Q5: What happens if fragment reassembly fails?
 
-**A:** URST works at any baud rate. Timeout values should be adjusted based on baud rate and payload size. For 115200 baud, 1000ms is appropriate. For 9600 baud, consider 2000ms.
+**A:** Implementations MUST implement fragment timeouts. If timeout expires, incomplete fragments are discarded.
 
-### Q6: How do I handle a completely desynchronized connection?
+### Q6: Is there a connection handshake?
 
-**A:** If sequence numbers are out of sync:
+**A:** Yes — CONNECT (0x05) and CONNECT_ACK (0x06) are mandatory and carry capability information. Sequence numbers are reset to 0 upon successful CONNECT.
 
-1. Clear both transmit and receive buffers
-2. Wait for timeout period (no transmissions)
-3. Reset sequence numbers to 0
-4. Resume communication
-
-In future versions, a RESYNC frame may be added.
-
-### Q7: Can I send binary data including 0x00 bytes?
-
-**A:** Yes! COBS encoding allows any binary data including null bytes. The payload can contain any byte values 0x00-0xFF.
-
-### Q8: What happens if fragment reassembly fails?
-
-**A:** Individual fragments use reliable delivery (ACK/NAK), so fragments won't be lost during transmission. However, if the sender crashes or disconnects mid-transmission, the receiver may have incomplete fragments.
-
-Implementations SHOULD implement a timeout to discard incomplete fragment sets. The timeout should be:
-
-```
-timeout = max_expected_fragments * (MAX_RETRIES + 1) * DEFAULT_TIMEOUT_MS
-
-Example: For up to 10 fragments with default settings:
-timeout = 10 * 4 * 1000ms = 40 seconds
-```
-
-This calculation accounts for each fragment potentially requiring all retry attempts before succeeding.
-
-### Q9: Is URST suitable for real-time applications?
-
-**A:** URST has bounded latency in the worst case (3.1 seconds with retries). For soft real-time (100ms-1s deadlines) it's suitable. For hard real-time (<10ms), the retry mechanism may cause deadline misses.
-
-### Q10: How do I detect if the other end has disconnected?
+### Q7: How do I detect if the other end has disconnected?
 
 **A:** URST doesn't have built-in keepalive. Applications should:
 
 - Implement periodic heartbeat messages
 - Consider lack of response to heartbeat as disconnection
-- Future versions may add KEEPALIVE frame type
 
-### Q11: Can multiple devices share a serial bus?
+### Q8: Can multiple devices share a serial bus?
 
 **A:** No, URST is strictly point-to-point. It has no addressing mechanism. For multi-drop serial buses, consider Modbus or implement an addressing layer on top of URST.
 
-### Q12: What's the maximum message size?
+### Q9: What's the maximum message size?
 
 **A:** With fragmentation, theoretically unlimited. Practically limited by:
 
@@ -1103,9 +1161,9 @@ This calculation accounts for each fragment potentially requiring all retry atte
 - Timeout for fragment reassembly
 - Application requirements
 
-### Q13: How do I implement firmware updates over URST?
+### Q10: How do I implement firmware updates over URST?
 
-**A:** Application-specific, but typical approach:
+**A:** This is partly why this specification has been developed as it will be used in a companion application for such a purpose. In short, it's application-specific, but typical approach would be:
 
 1. Send metadata (file size, CRC, version)
 2. Fragment binary data (use URST fragmentation)
@@ -1113,12 +1171,18 @@ This calculation accounts for each fragment potentially requiring all retry atte
 4. Verify complete file CRC
 5. Trigger bootloader
 
-Reserved frame types 0x05-0x0F may be standardized for this in future versions.
-
 ---
 
 ## Appendix D. Change Log
 
 | Version | Date       | Description                                                                                                           |
 | :------ | :--------- | :-------------------------------------------------------------------------------------------------------------------- |
+| 0.3.3   | 2025-10-23 | Added CONNECT/CONNECT_ACK handshake, ERROR, ABORT, BUSY, READY frames;                                                |
+|         |            | Made fragment timeout & single Message ID mandatory                                                                   |
+|         |            | Clarified CRC/COBS ordering                                                                                           |
+|         |            | Enforced strict stop-and-wait semantics.                                                                              |
 | 0.3.2   | 2025-10-13 | Added FRAG frame type to mitigate edge case where a DATA frame's content _could_ have been interpreted as a fragment. |
+
+---
+
+**End of Specification**
