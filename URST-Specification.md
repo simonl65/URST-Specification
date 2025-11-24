@@ -210,7 +210,7 @@ The Sequence Number field is an 8-bit counter (0-255) used for:
 - Sequence numbers MUST wrap from 255 to 0
 - Retransmissions MUST use the same sequence number as the original
 - ACK and NAK frames MUST use the sequence number of the frame being acknowledged
-- On connection establishment (CONNECT/CONNECT_ACK) both sides' sequence numbers MUST be reset to 0 (see §5.6)
+- On connection establishment (CONNECT/CONNECT_ACK) both sides' sequence numbers MUST be reset to 0 (see §5.6). The CONNECT frame itself uses Sequence Number 0 and does not increment the sequence counter.
 
 #### 3.2.3 Payload (0-200 bytes)
 
@@ -275,7 +275,7 @@ The complete frame encoding process MUST follow these steps:
 - Maximum logical frame: 202 bytes (header + 200 byte payload)
 - Maximum frame with CRC: 204 bytes
 - Maximum COBS overhead: 3 bytes (1 byte per 254 bytes + 1)
-- Maximum physical frame: 209 bytes (including delimiters)
+- Maximum physical frame: 208 bytes (including delimiters)
 
 ### 3.4 CRC-16/CCITT_FALSE Algorithm Specification
 
@@ -732,7 +732,7 @@ ERROR payload format (structured):
 
 - BUSY indicates the receiver is temporarily unable to deliver incoming frames to the application layer.
 - Upon receiving BUSY, the sender MUST pause further transmissions for new frames.
-  - The sender SHOULD pause retries for the in-flight frame (implementation choice) and MUST NOT treat BUSY as an ACK.
+  - The sender SHOULD pause retries for the in-flight frame, but MUST periodically send a probe (e.g., retransmit the last unacknowledged frame) to detect if the receiver has become READY but the READY frame was lost. The sender MUST NOT treat BUSY as an ACK.
 - READY indicates the receiver can resume normal reception and processing.
 - BUSY and READY frames have empty payloads and are not acknowledged.
 
@@ -755,7 +755,7 @@ Fragmented messages use FRAG frames with a specific payload structure:
 +---------------+---------------+---------------+---------------+
 |   Message ID  | Fragment Num  | Total Frags   |  Data Length  |
 +---------------+---------------+---------------+---------------+
-|                  Fragment Data (0-194 bytes)|                 |
+|                  Fragment Data (0-196 bytes)|                 |
 +---------------------------------------------------------------+
 
 ```
@@ -774,18 +774,18 @@ Fragmented messages use FRAG frames with a specific payload structure:
 
 When fragmenting a message, the sender MUST:
 
-1. Check if message size exceeds (MAX_PAYLOAD_SIZE - 6) bytes
+1. Check if message size exceeds (MAX_PAYLOAD_SIZE - 4) bytes
 2. Assign a Message ID (incrementing counter, wrapping 0-255)
-3. Calculate required fragments: `total_frags = ceil(msg_len / (MAX_PAYLOAD_SIZE - 6))`
+3. Calculate required fragments: `total_frags = ceil(msg_len / (MAX_PAYLOAD_SIZE - 4))`
 4. For each fragment (i = 0 to total_frags - 1):
-   - Extract fragment data: `data[i * (MAX_PAYLOAD_SIZE - 6) : (i+1) * (MAX_PAYLOAD_SIZE - 6)]`
+   - Extract fragment data: `data[i * (MAX_PAYLOAD_SIZE - 4) : (i+1) * (MAX_PAYLOAD_SIZE - 4)]`
    - Construct fragment header: `[msg_id][i][total_frags][len(fragment_data)]`
    - Send fragment + header in a FRAG frame using reliable delivery (ACK/NAK)
 5. Only proceed to next fragment after successful ACK for the current fragment (strict sequential send)
 6. Senders MUST NOT begin sending fragments for a new Message ID until the previous Message ID's fragments have been completed (MUST NOT interleave)
 7. If a sender is unable to continue a fragmented transfer, it MUST send ABORT (0x08) for that Message ID
 
-**Default Maximum Fragment Data Size:** MAX_PAYLOAD_SIZE - 6 = 194 bytes
+**Default Maximum Fragment Data Size:** MAX_PAYLOAD_SIZE - 4 = 196 bytes
 
 #### 6.3.2 Receiver Requirements
 
